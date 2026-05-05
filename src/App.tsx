@@ -125,6 +125,44 @@ function ConfidenceDot({ confidence }: { confidence: string }) {
   );
 }
 
+function SaveButton({ result }: { result: SearchResult }) {
+  const saveProject = useMutation(api.projects.saveProject);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "duplicate">("idle");
+
+  const handleSave = async () => {
+    if (status !== "idle") return;
+    setStatus("saving");
+    try {
+      const res = await saveProject({
+        name: result.project_name!,
+        developer: result.developer ?? "",
+        area: result.area ?? undefined,
+        state: result.state ?? "",
+        completion_year: result.completion_year ?? undefined,
+      });
+      setStatus(res.status === "duplicate" ? "duplicate" : "saved");
+    } catch {
+      setStatus("idle");
+    }
+  };
+
+  if (status === "saved") {
+    return <span className="text-xs text-emerald-400 font-medium">Saved ✓</span>;
+  }
+  if (status === "duplicate") {
+    return <span className="text-xs text-amber-400 font-medium">Already exists</span>;
+  }
+  return (
+    <button
+      onClick={() => void handleSave()}
+      disabled={status === "saving"}
+      className="text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 px-2.5 py-0.5 rounded transition-colors disabled:opacity-50"
+    >
+      {status === "saving" ? "Saving…" : "Save"}
+    </button>
+  );
+}
+
 function ResultCard({
   result,
   searchType,
@@ -133,25 +171,26 @@ function ResultCard({
   searchType: SearchType;
 }) {
   const accentUrl = searchType === "unsold" ? "text-emerald-400" : "text-amber-400";
-  // Use extracted project_name as headline; fall back to raw page title
-  const headline = result.project_name ?? result.title;
-  const hasExtracted = result.project_name !== null;
+  // project_name is guaranteed non-null here (SearchPanel filters before rendering)
+  const headline = result.project_name!;
 
   return (
     <div className="bg-gray-800 rounded-xl p-4 flex flex-col gap-3 border border-gray-700">
 
-      {/* ── Headline + duplicate badge ── */}
+      {/* ── Headline + duplicate badge + save ── */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-col gap-0.5 flex-1 min-w-0">
           <p className="text-white font-bold text-base leading-snug">
             {headline}
           </p>
-          {/* Show raw page title as subtitle only when we have an extracted name */}
-          {hasExtracted && result.title !== result.project_name && (
+          {result.title !== result.project_name && (
             <p className="text-gray-500 text-xs truncate">{result.title}</p>
           )}
         </div>
-        <DuplicateBadge title={headline} />
+        <div className="flex items-center gap-2 shrink-0">
+          <SaveButton result={result} />
+          <DuplicateBadge title={headline} />
+        </div>
       </div>
 
       {/* ── Developer + location row ── */}
@@ -191,9 +230,6 @@ function ResultCard({
           High Rise
         </span>
         <ConfidenceDot confidence={result.confidence} />
-        {!hasExtracted && (
-          <span className="text-xs text-gray-600 italic">no extraction</span>
-        )}
       </div>
 
       {/* ── Source URL ── */}
@@ -409,13 +445,18 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
           <p className="text-gray-500 text-sm text-center py-12">No high-rise results found.</p>
         )}
 
-        {!loading && results.length > 0 && (
-          <div className="grid grid-cols-1 gap-4">
-            {results.map((r, i) => (
-              <ResultCard key={i} result={r} searchType={searchType} />
-            ))}
-          </div>
-        )}
+        {!loading && results.length > 0 && (() => {
+          const named = results.filter((r) => r.project_name !== null);
+          return named.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-12">No results with extracted project names.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {named.map((r, i) => (
+                <ResultCard key={i} result={r} searchType={searchType} />
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

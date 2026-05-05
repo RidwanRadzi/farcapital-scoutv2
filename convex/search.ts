@@ -155,6 +155,7 @@ export const searchProjects = action({
       "jabatan", "kerajaan", "gov.my", "bernama", "rehda", "napic",
       "planningmalaysia", "subsale", "auction", "lelong",
       "second-hand", "secondhand",
+      "property-for-rent", "untuk-disewa", "for-rent", "sewa",
     ];
 
     // Domain priority: lower index = higher priority

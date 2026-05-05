@@ -66,3 +66,32 @@ export const seedFromCSV = mutation({
     return { inserted, skipped };
   },
 });
+
+export const saveProject = mutation({
+  args: {
+    name: v.string(),
+    developer: v.string(),
+    area: v.optional(v.string()),
+    state: v.string(),
+    completion_year: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ status: "inserted" | "duplicate" }> => {
+    const all = await ctx.db.query("projects").order("desc").take(1000);
+    const nameLower = args.name.toLowerCase();
+    const duplicate = all.some(
+      (p) =>
+        p.name.toLowerCase().includes(nameLower) ||
+        nameLower.includes(p.name.toLowerCase()),
+    );
+    if (duplicate) return { status: "duplicate" };
+    await ctx.db.insert("projects", {
+      name: args.name,
+      developer: args.developer,
+      area: args.area ?? "",
+      state: args.state,
+      completion_year: args.completion_year ?? 0,
+      source: "scout",
+    });
+    return { status: "inserted" };
+  },
+});
