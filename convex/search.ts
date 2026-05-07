@@ -41,22 +41,43 @@ async function searchSearXNG(baseUrl: string, q: string): Promise<RawResult[]> {
 async function extractWithClaude(
   apiKey: string,
   title: string,
+  url: string,
   content: string,
 ): Promise<Omit<ExtractedResult, keyof RawResult> | null> {
-  const prompt = `You are extracting structured data from a Malaysian property search result.
-Return ONLY a valid JSON object — no markdown, no explanation, no code fences.
+  const prompt = `You are a Malaysian property analyst extracting structured data from property search snippets for a bulk acquisition firm. Extract only HIGH-RISE residential projects (condominiums, serviced apartments, SOHO, SoVo) that may have unsold developer stock.
 
-Fields to extract:
-- project_name: string or null (the property project name, e.g. "Residensi Harmoni")
-- developer: string or null (the developer company, e.g. "SP Setia")
-- area: string or null (suburb/district, e.g. "Cheras", "Bukit Jalil")
-- state: string or null (use abbreviations: KL, SEL, JOH, PEN, NS, KED, SBH, SWK, MLK, TRG, PHG, KTN, PRK, PLS, LBN, PJY)
-- completion_year: number or null (4-digit year)
-- is_high_rise: boolean (true if condominium/serviced apartment/SOHO/apartment/flat; false if terrace/semi-d/bungalow/townhouse/link house)
-- has_unsold_signal: boolean (true if text mentions unsold/overhang/tidak terjual/developer stock/available units from developer)
-- confidence: "high" | "medium" | "low"
+IMPORTANT SIGNALS to detect has_unsold_signal = true:
+- Active sales gallery or developer is still selling
+- Take-up below 100% mentioned (e.g. "85% sold", "limited units")
+- Developer offering rebates, free legal fees, zero downpayment, cashback
+- Bumiputera units being released to non-bumi buyers
+- "Developer unit", "direct developer", "unit pemaju", "terus pemaju"
+- Completed recently (2020-2026) with listings still active
+
+IMPORTANT SIGNALS to detect has_unsold_signal = false:
+- "Fully sold", "sold out", "terjual habis"
+- Only subsale listings (not developer direct)
+- Government affordable housing (RUMAWIP, PR1MA, PPR, Residensi Wilayah)
+
+Source credibility (affects confidence score):
+- edgeprop.my, theedge.com.my, jll.com.my, knightfrank.com.my = HIGH confidence
+- propertyguru.com.my, iproperty.com.my, nuprop.com = MEDIUM confidence
+- Agent/negotiator sites, Facebook, TikTok = LOW confidence
+
+Return ONLY a valid JSON object, no markdown, no explanation:
+{
+  "project_name": string or null,
+  "developer": string or null,
+  "area": string or null,
+  "state": string or null (KL/SEL/JOH/PEN/NS/etc),
+  "completion_year": number or null,
+  "is_high_rise": boolean,
+  "has_unsold_signal": boolean,
+  "confidence": "high" or "medium" or "low"
+}
 
 Title: ${title}
+URL: ${url}
 Snippet: ${content.slice(0, 600)}`;
 
   let responseText = "";
@@ -135,12 +156,15 @@ export const searchProjects = action({
     const queries =
       args.searchType === "unsold"
         ? [
-            `${q} condominium OR "serviced apartment" OR SOHO developer unit FOR SALE site:propertyguru.com.my`,
-            `${q} kondominium OR "apartment servis" pemaju unit baharu Malaysia 2023 2024 2025`,
-            `${q} new property developer launch condominium "serviced apartment" Malaysia site:edgeprop.my OR site:iproperty.com.my`,
+            `${q} kondominium OR condominium OR "serviced apartment" OR SOHO pemaju developer 2020 2021 2022 2023 2024 2025 2026 Malaysia`,
+            `${q} rumah kondo apartment servis unit baru pemaju Malaysia 2020 2021 2022 2023 2024 2025`,
+            `${q} new property developer high-rise condominium serviced apartment Malaysia completed 2020 2021 2022 2023 2024 2025 2026`,
+            `${q} condominium OR "serviced apartment" developer unit Malaysia 2020 2021 2022 2023 2024 2025 2026 nuprop.com`,
+            `${q} serviced apartment condominium new property Malaysia developer 2022 2023 2024 2025 2026`,
+            `${q} projek perumahan kondominium kondo Malaysia pemaju 2022 2023 2024 2025`,
           ]
         : [
-            `${q} new launch condominium OR "serviced apartment" OR SOHO developer 2025 2026 site:propertyguru.com.my OR site:edgeprop.my`,
+            `${q} new launch condominium OR "serviced apartment" OR SOHO developer 2025 2026 Malaysia`,
             `${q} pelancaran baharu kondominium OR "apartment servis" pemaju Malaysia 2025 2026`,
           ];
 
@@ -156,6 +180,11 @@ export const searchProjects = action({
       "planningmalaysia", "subsale", "auction", "lelong",
       "second-hand", "secondhand",
       "property-for-rent", "untuk-disewa", "for-rent", "sewa",
+      "rumawip", "residensi wilayah", "pr1ma", "ppr ",
+      "pprt", "rumah mampu milik", "rumah selangorku", "myhome",
+      "residensi prihatin", "balloting", "ballot",
+      "affordable housing", "kos rendah",
+      "foreclosure", "pkns",
     ];
 
     // Domain priority: lower index = higher priority
@@ -163,6 +192,7 @@ export const searchProjects = action({
       "propertyguru.com.my",
       "edgeprop.my",
       "iproperty.com.my",
+      "nuprop.com",
     ];
 
     function domainScore(url: string): number {
@@ -193,7 +223,7 @@ export const searchProjects = action({
     // Run Claude extraction in parallel for all results
     const extracted = await Promise.all(
       deduped.map(async (r): Promise<ExtractedResult> => {
-        const meta = await extractWithClaude(apiKey, r.title, r.content);
+        const meta = await extractWithClaude(apiKey, r.title, r.url, r.content);
         return {
           ...r,
           project_name: meta?.project_name ?? null,
@@ -239,16 +269,51 @@ export const searchProjects = action({
       return true;
     });
 
+    // Hard filter: drop results with a year clearly outside the valid acquisition window
+    const yearFiltered = highRise.filter((r) => {
+      const yr = r.completion_year;
+      if (yr === null) return true; // unknown year — keep
+      if (yr < 2020 || yr > 2027) {
+        console.log(`[filter] dropped out-of-range year ${yr}: ${r.url}`);
+        return false;
+      }
+      return true;
+    });
+
     // Sort: extracted project names first, no-extraction results at the bottom
-    highRise.sort((a, b) => {
+    yearFiltered.sort((a, b) => {
       const aHas = a.project_name !== null ? 0 : 1;
       const bHas = b.project_name !== null ? 0 : 1;
       return aHas - bHas;
     });
 
+    // Deduplicate by project_name: keep highest confidence, then highest domain priority
+    const CONFIDENCE_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    const byName = new Map<string, ExtractedResult>();
+    for (const r of yearFiltered) {
+      if (r.project_name === null) continue; // no-name results pass through unchanged
+      const key = r.project_name.toLowerCase().trim();
+      const existing = byName.get(key);
+      if (!existing) {
+        byName.set(key, r);
+        continue;
+      }
+      const rConf = CONFIDENCE_RANK[r.confidence] ?? 2;
+      const eConf = CONFIDENCE_RANK[existing.confidence] ?? 2;
+      if (rConf < eConf || (rConf === eConf && domainScore(r.url) < domainScore(existing.url))) {
+        byName.set(key, r); // incoming is better
+      }
+    }
+    const noName = yearFiltered.filter((r) => r.project_name === null);
+    const dedupedByName = [...byName.values(), ...noName];
+    const removedDupes = yearFiltered.length - dedupedByName.length;
+    if (removedDupes > 0) {
+      console.log(`[dedup] removed ${removedDupes} duplicate project name(s)`);
+    }
+
     console.log(
-      `[search] deduped=${deduped.length}, high_rise=${highRise.length} (${highRise.filter((r) => r.project_name !== null).length} with extraction)`,
+      `[search] deduped=${deduped.length}, high_rise=${highRise.length}, after_year_filter=${yearFiltered.length}, final=${dedupedByName.length} (${byName.size} named, ${noName.length} unnamed)`,
     );
-    return highRise;
+    return dedupedByName;
   },
 });

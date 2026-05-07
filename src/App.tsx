@@ -349,11 +349,84 @@ function SeedModal({ onClose }: { onClose: () => void }) {
 
 // ─── Tab search panel ─────────────────────────────────────────────────────────
 
+const YEAR_MIN = 2020;
+const YEAR_MAX = 2027;
+
+function YearRangeSlider({
+  minYear,
+  maxYear,
+  onChange,
+}: {
+  minYear: number;
+  maxYear: number;
+  onChange: (min: number, max: number) => void;
+}) {
+  const pct = (v: number) => ((v - YEAR_MIN) / (YEAR_MAX - YEAR_MIN)) * 100;
+  // When min is at the far right, raise its z-index so it can still be dragged left
+  const minZ = minYear === YEAR_MAX ? 5 : 3;
+  const maxZ = 4;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-400">Completion year</span>
+        <span className="text-xs text-gray-300 font-mono tabular-nums">
+          {minYear} – {maxYear}
+        </span>
+      </div>
+      {/* Track + filled range */}
+      <div className="relative h-5 flex items-center">
+        <div className="absolute w-full h-1 rounded bg-gray-700" />
+        <div
+          className="absolute h-1 rounded bg-emerald-600"
+          style={{ left: `${pct(minYear)}%`, width: `${pct(maxYear) - pct(minYear)}%` }}
+        />
+        {/* Min handle — pointer-events: none on track, all on thumb via .range-thumb CSS */}
+        <input
+          type="range"
+          min={YEAR_MIN}
+          max={YEAR_MAX}
+          step={1}
+          value={minYear}
+          onChange={(e) => {
+            const v = Math.min(Number(e.target.value), maxYear);
+            onChange(v, maxYear);
+          }}
+          className="range-thumb absolute w-full"
+          style={{ zIndex: minZ }}
+        />
+        {/* Max handle */}
+        <input
+          type="range"
+          min={YEAR_MIN}
+          max={YEAR_MAX}
+          step={1}
+          value={maxYear}
+          onChange={(e) => {
+            const v = Math.max(Number(e.target.value), minYear);
+            onChange(minYear, v);
+          }}
+          className="range-thumb absolute w-full"
+          style={{ zIndex: maxZ }}
+        />
+      </div>
+      {/* Tick labels */}
+      <div className="flex justify-between text-gray-600 text-xs select-none">
+        {Array.from({ length: YEAR_MAX - YEAR_MIN + 1 }, (_, i) => YEAR_MIN + i).map((yr) => (
+          <span key={yr}>{yr}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SearchPanel({ searchType }: { searchType: SearchType }) {
   const [input, setInput] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [minYear, setMinYear] = useState(YEAR_MIN);
+  const [maxYear, setMaxYear] = useState(YEAR_MAX);
 
   const searchProjects = useAction(api.search.searchProjects);
 
@@ -390,6 +463,14 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
     setInput(chip);
     void runSearch(chip);
   };
+
+  // Client-side year filter applied to named results
+  const named = results.filter((r) => r.project_name !== null);
+  const visible = named.filter(
+    (r) =>
+      r.completion_year === null ||
+      (r.completion_year >= minYear && r.completion_year <= maxYear),
+  );
 
   return (
     <div className="flex flex-col gap-4 w-full max-w-2xl mx-auto">
@@ -429,8 +510,30 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
         ))}
       </div>
 
+      {/* Year range slider — only shown after results arrive */}
+      {searched && results.length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+          <YearRangeSlider
+            minYear={minYear}
+            maxYear={maxYear}
+            onChange={(mn, mx) => { setMinYear(mn); setMaxYear(mx); }}
+          />
+        </div>
+      )}
+
+      {/* Result count */}
+      {!loading && searched && named.length > 0 && (
+        <p className="text-xs text-gray-500">
+          Showing{" "}
+          <span className="text-gray-300 font-medium">{visible.length}</span>
+          {" "}of{" "}
+          <span className="text-gray-300 font-medium">{named.length}</span>
+          {" "}results
+        </p>
+      )}
+
       {/* Results */}
-      <div className="mt-4">
+      <div className="mt-2">
         {loading && (
           <div className={`flex items-center gap-3 ${accent.spinner} justify-center py-12`}>
             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
@@ -441,22 +544,23 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
           </div>
         )}
 
-        {!loading && searched && results.length === 0 && (
-          <p className="text-gray-500 text-sm text-center py-12">No high-rise results found.</p>
+        {!loading && searched && named.length === 0 && (
+          <p className="text-gray-500 text-sm text-center py-12">No results with extracted project names.</p>
         )}
 
-        {!loading && results.length > 0 && (() => {
-          const named = results.filter((r) => r.project_name !== null);
-          return named.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-12">No results with extracted project names.</p>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {named.map((r, i) => (
-                <ResultCard key={i} result={r} searchType={searchType} />
-              ))}
-            </div>
-          );
-        })()}
+        {!loading && named.length > 0 && visible.length === 0 && (
+          <p className="text-gray-500 text-sm text-center py-12">
+            No results in {minYear}–{maxYear}. Try widening the year range.
+          </p>
+        )}
+
+        {!loading && visible.length > 0 && (
+          <div className="grid grid-cols-1 gap-4">
+            {visible.map((r, i) => (
+              <ResultCard key={i} result={r} searchType={searchType} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
