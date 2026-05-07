@@ -347,6 +347,59 @@ function SeedModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ─── Unverified leads collapsible ─────────────────────────────────────────────
+
+function UnverifiedLeads({ results }: { results: SearchResult[] }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="border border-gray-800 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-gray-900 hover:bg-gray-800 transition-colors text-left"
+      >
+        <span className="text-xs text-gray-400 font-medium">
+          Unverified leads ({results.length})
+        </span>
+        <svg
+          className={`w-4 h-4 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path
+            fillRule="evenodd"
+            d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="flex flex-col divide-y divide-gray-800">
+          {results.map((r, i) => (
+            <div key={i} className="px-4 py-3 flex flex-col gap-1 bg-gray-900">
+              <p className="text-gray-300 text-xs font-medium leading-snug">{r.title}</p>
+              <a
+                href={r.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-gray-600 hover:text-gray-400 text-xs break-all transition-colors"
+              >
+                {r.url}
+              </a>
+              {r.content && (
+                <p className="text-gray-600 text-xs leading-relaxed">
+                  {r.content.slice(0, 150)}{r.content.length > 150 ? "…" : ""}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Tab search panel ─────────────────────────────────────────────────────────
 
 const YEAR_MIN = 2020;
@@ -464,8 +517,9 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
     void runSearch(chip);
   };
 
-  // Client-side year filter applied to named results
+  // Split into named (verified) and unnamed (unverified)
   const named = results.filter((r) => r.project_name !== null);
+  const unnamed = results.filter((r) => r.project_name === null);
   const visible = named.filter(
     (r) =>
       r.completion_year === null ||
@@ -522,18 +576,20 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
       )}
 
       {/* Result count */}
-      {!loading && searched && named.length > 0 && (
+      {!loading && searched && (named.length > 0 || unnamed.length > 0) && (
         <p className="text-xs text-gray-500">
           Showing{" "}
           <span className="text-gray-300 font-medium">{visible.length}</span>
-          {" "}of{" "}
-          <span className="text-gray-300 font-medium">{named.length}</span>
-          {" "}results
+          {" "}verified
+          {unnamed.length > 0 && (
+            <> + <span className="text-gray-300 font-medium">{unnamed.length}</span>{" "}unverified</>
+          )}
+          {" "}leads
         </p>
       )}
 
       {/* Results */}
-      <div className="mt-2">
+      <div className="mt-2 flex flex-col gap-4">
         {loading && (
           <div className={`flex items-center gap-3 ${accent.spinner} justify-center py-12`}>
             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
@@ -544,13 +600,13 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
           </div>
         )}
 
-        {!loading && searched && named.length === 0 && (
-          <p className="text-gray-500 text-sm text-center py-12">No results with extracted project names.</p>
+        {!loading && searched && named.length === 0 && unnamed.length === 0 && (
+          <p className="text-gray-500 text-sm text-center py-12">No results found.</p>
         )}
 
         {!loading && named.length > 0 && visible.length === 0 && (
-          <p className="text-gray-500 text-sm text-center py-12">
-            No results in {minYear}–{maxYear}. Try widening the year range.
+          <p className="text-gray-500 text-sm text-center py-6">
+            No verified results in {minYear}–{maxYear}. Try widening the year range.
           </p>
         )}
 
@@ -560,6 +616,11 @@ function SearchPanel({ searchType }: { searchType: SearchType }) {
               <ResultCard key={i} result={r} searchType={searchType} />
             ))}
           </div>
+        )}
+
+        {/* Unverified leads collapsible */}
+        {!loading && unnamed.length > 0 && (
+          <UnverifiedLeads results={unnamed} />
         )}
       </div>
     </div>
